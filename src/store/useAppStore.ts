@@ -11,10 +11,14 @@ interface AppState {
   // Photos
   photos: PhotoItem[];
   activePhotoIndex: number;
+  selectedPhotoIds: string[];
   addPhotos: (files: File[]) => Promise<void>;
   removePhoto: (id: string) => void;
+  removePhotos: (ids: string[]) => void;
   reorderPhotos: (oldIndex: number, newIndex: number) => void;
   setActivePhoto: (index: number) => void;
+  setSelectedPhotos: (ids: string[]) => void;
+  togglePhotoSelection: (id: string, isShift: boolean, isCtrl: boolean) => void;
   updateTransform: (id: string, partial: Partial<PhotoTransform>) => void;
   resetTransform: (id: string) => void;
 
@@ -81,6 +85,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Photos
   photos: [],
   activePhotoIndex: 0,
+  selectedPhotoIds: [],
 
   addPhotos: async (files) => {
     const { canvasWidth, canvasHeight, photos } = get();
@@ -164,8 +169,70 @@ export const useAppStore = create<AppState>((set, get) => ({
   setActivePhoto: (index) => {
     const { photos } = get();
     if (index >= 0 && index < photos.length) {
-      set({ activePhotoIndex: index });
+      set({ 
+        activePhotoIndex: index,
+        selectedPhotoIds: [photos[index].id]
+      });
     }
+  },
+
+  setSelectedPhotos: (ids) => set({ selectedPhotoIds: ids }),
+
+  togglePhotoSelection: (id, isShift, isCtrl) => {
+    const { photos, selectedPhotoIds } = get();
+    const photoIndex = photos.findIndex(p => p.id === id);
+    if (photoIndex === -1) return;
+
+    let newSelected: string[] = [];
+
+    if (isShift && selectedPhotoIds.length > 0) {
+      const lastId = selectedPhotoIds[selectedPhotoIds.length - 1];
+      const lastIndex = photos.findIndex(p => p.id === lastId);
+      const start = Math.min(lastIndex, photoIndex);
+      const end = Math.max(lastIndex, photoIndex);
+      newSelected = photos.slice(start, end + 1).map(p => p.id);
+    } else if (isCtrl) {
+      if (selectedPhotoIds.includes(id)) {
+        newSelected = selectedPhotoIds.filter(sid => sid !== id);
+      } else {
+        newSelected = [...selectedPhotoIds, id];
+      }
+    } else {
+      newSelected = [id];
+    }
+
+    set({ 
+      selectedPhotoIds: newSelected,
+      activePhotoIndex: photoIndex 
+    });
+  },
+
+  removePhotos: (ids) => {
+    const { photos, activePhotoIndex } = get();
+    const activePhotoId = photos[activePhotoIndex]?.id;
+    
+    // Revoke object URLs for removed photos
+    photos.filter(p => ids.includes(p.id)).forEach(p => {
+      URL.revokeObjectURL(p.objectURL);
+    });
+
+    const newPhotos = photos.filter(p => !ids.includes(p.id));
+    
+    let newIndex = 0;
+    if (newPhotos.length > 0) {
+      const foundIdx = newPhotos.findIndex(p => p.id === activePhotoId);
+      if (foundIdx !== -1) {
+        newIndex = foundIdx;
+      } else {
+        newIndex = Math.min(activePhotoIndex, newPhotos.length - 1);
+      }
+    }
+
+    set({ 
+      photos: newPhotos, 
+      activePhotoIndex: newIndex,
+      selectedPhotoIds: newPhotos.length > 0 ? [newPhotos[newIndex].id] : []
+    });
   },
 
   updateTransform: (id, partial) => {

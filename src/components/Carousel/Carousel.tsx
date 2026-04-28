@@ -6,7 +6,6 @@ import {
   useSensor, 
   useSensors,
   DragOverlay,
-  defaultDropAnimationSideEffects,
 } from '@dnd-kit/core';
 import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
 import {
@@ -15,23 +14,30 @@ import {
   horizontalListSortingStrategy,
   useSortable,
 } from '@dnd-kit/sortable';
-import { arrayMove } from '@dnd-kit/sortable'; // Often used as value
 import { CSS } from '@dnd-kit/utilities';
 import { Box, IconButton, Typography, Tooltip } from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { useAppStore } from '../../store/useAppStore';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { PhotoItem } from '../../types';
 
 interface SortableThumbnailProps {
   photo: PhotoItem;
-  index: number;
   isActive: boolean;
-  onClick: () => void;
+  isSelected: boolean;
+  onClick: (e: React.MouseEvent) => void;
+  onRemove: () => void;
 }
 
-function SortableThumbnail({ photo, index, isActive, onClick }: SortableThumbnailProps) {
+function SortableThumbnail({ 
+  photo, 
+  isActive, 
+  isSelected,
+  onClick, 
+  onRemove 
+}: SortableThumbnailProps) {
   const {
     attributes,
     listeners,
@@ -44,56 +50,115 @@ function SortableThumbnail({ photo, index, isActive, onClick }: SortableThumbnai
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
+    opacity: isDragging ? 0.5 : 1,
     zIndex: isDragging ? 10 : 1,
-    opacity: isDragging ? 0.4 : 1,
+    position: 'relative' as const,
   };
 
   return (
     <Box
       ref={setNodeRef}
       style={style}
-      {...attributes}
-      {...listeners}
-      onClick={onClick}
       sx={{
-        width: 56,
-        height: 56,
-        minWidth: 56,
+        width: 80,
+        height: 80,
+        flexShrink: 0,
         borderRadius: 1,
         overflow: 'hidden',
-        cursor: isDragging ? 'grabbing' : 'pointer',
+        cursor: 'pointer',
+        position: 'relative',
         border: '2px solid',
-        borderColor: isActive ? 'primary.main' : 'transparent',
-        opacity: isActive ? 1 : 0.5,
-        transition: 'all 0.15s ease',
-        '&:hover': {
-          opacity: 1,
-          borderColor: isActive ? 'primary.main' : 'rgba(255,255,255,0.2)',
-        },
+        borderColor: isActive ? 'primary.main' : (isSelected ? 'rgba(124, 77, 255, 0.6)' : 'transparent'),
+        boxShadow: isActive ? '0 0 10px rgba(124, 77, 255, 0.4)' : 'none',
+        '&:hover .remove-btn': { opacity: 1 },
+        transition: 'all 0.2s ease',
       }}
+      onClick={onClick}
     >
-      <img
+      <Box
+        {...attributes}
+        {...listeners}
+        component="img"
         src={photo.objectURL}
-        alt={photo.file.name}
-        style={{
+        sx={{
           width: '100%',
           height: '100%',
           objectFit: 'cover',
-          pointerEvents: 'none', // Important for drag
+          userSelect: 'none',
         }}
       />
+      
+      {/* Selection Overlay */}
+      {isSelected && !isActive && (
+        <Box sx={{ 
+          position: 'absolute', 
+          inset: 0, 
+          bgcolor: 'primary.main', 
+          opacity: 0.2,
+          pointerEvents: 'none'
+        }} />
+      )}
+
+      <IconButton
+        className="remove-btn"
+        size="small"
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }}
+        sx={{
+          position: 'absolute',
+          top: 2,
+          right: 2,
+          bgcolor: 'rgba(0,0,0,0.6)',
+          color: 'white',
+          opacity: 0,
+          p: 0.5,
+          transition: 'opacity 0.2s',
+          '&:hover': { bgcolor: 'error.main' },
+        }}
+      >
+        <CloseIcon sx={{ fontSize: 12 }} />
+      </IconButton>
     </Box>
   );
 }
 
 export default function Carousel() {
-  const { photos, activePhotoIndex, setActivePhoto, reorderPhotos } = useAppStore();
-  const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const { 
+    photos, 
+    activePhotoIndex, 
+    selectedPhotoIds,
+    setActivePhoto,
+    reorderPhotos, 
+    removePhoto,
+    removePhotos,
+    togglePhotoSelection,
+  } = useAppStore();
+  
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  // Global Delete/Backspace listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedPhotoIds.length > 0) {
+        // Prevent deletion if user is typing in an input
+        const tag = document.activeElement?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || (document.activeElement as HTMLElement)?.isContentEditable) {
+          return;
+        }
+        removePhotos(selectedPhotoIds);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedPhotoIds, removePhotos]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 5, // Avoid triggering drag on simple click
+        distance: 5,
       },
     }),
     useSensor(KeyboardSensor, {
@@ -101,21 +166,18 @@ export default function Carousel() {
     })
   );
 
-  if (photos.length === 0) return null;
-
-  const handleDragStart = (event: any) => {
-    setActiveDragId(event.active.id);
+  const handleDragStart = (event: DragStartEvent) => {
+    setActiveId(event.active.id as string);
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
-    setActiveDragId(null);
-
     if (over && active.id !== over.id) {
       const oldIndex = photos.findIndex((p) => p.id === active.id);
       const newIndex = photos.findIndex((p) => p.id === over.id);
       reorderPhotos(oldIndex, newIndex);
     }
+    setActiveId(null);
   };
 
   const handlePrev = () => {
@@ -126,109 +188,88 @@ export default function Carousel() {
     if (activePhotoIndex < photos.length - 1) setActivePhoto(activePhotoIndex + 1);
   };
 
-  const activePhoto = photos.find(p => p.id === activeDragId);
+  if (photos.length === 0) return null;
+
+  const activeDragPhoto = photos.find(p => p.id === activeId);
 
   return (
     <Box
       sx={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 1,
-        px: 2,
-        py: 1.5,
+        height: 120,
         bgcolor: 'background.paper',
         borderTop: '1px solid',
         borderColor: 'divider',
-        overflow: 'hidden',
+        display: 'flex',
+        alignItems: 'center',
+        px: 2,
+        gap: 1.5,
       }}
     >
-      <IconButton
-        size="small"
-        onClick={handlePrev}
-        disabled={activePhotoIndex === 0}
-      >
+      <IconButton size="small" onClick={handlePrev} disabled={activePhotoIndex === 0}>
         <ChevronLeftIcon />
       </IconButton>
 
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-      >
-        <Box
-          sx={{
-            flex: 1,
-            display: 'flex',
-            gap: 1,
-            overflow: 'auto',
-            py: 0.5,
-            px: 0.5,
-            scrollbarWidth: 'thin',
-            '&::-webkit-scrollbar': { height: 4 },
-            '&::-webkit-scrollbar-thumb': {
-              bgcolor: 'rgba(255,255,255,0.15)',
-              borderRadius: 2,
-            },
-          }}
+      <Box sx={{ flex: 1, overflow: 'hidden' }}>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
         >
-          <SortableContext items={photos.map(p => p.id)} strategy={horizontalListSortingStrategy}>
-            {photos.map((photo, i) => (
-              <Tooltip key={photo.id} title={photo.file.name} placement="top">
-                <div>
-                  <SortableThumbnail
-                    photo={photo}
-                    index={i}
-                    isActive={i === activePhotoIndex}
-                    onClick={() => setActivePhoto(i)}
-                  />
-                </div>
-              </Tooltip>
-            ))}
-          </SortableContext>
-        </Box>
+          <Box
+            sx={{
+              display: 'flex',
+              gap: 1.5,
+              overflowX: 'auto',
+              py: 1,
+              scrollbarWidth: 'none',
+              '&::-webkit-scrollbar': { display: 'none' },
+            }}
+          >
+            <SortableContext items={photos.map(p => p.id)} strategy={horizontalListSortingStrategy}>
+              {photos.map((photo, index) => (
+                <SortableThumbnail
+                  key={photo.id}
+                  photo={photo}
+                  isActive={index === activePhotoIndex}
+                  isSelected={selectedPhotoIds.includes(photo.id)}
+                  onClick={(e) => togglePhotoSelection(photo.id, e.shiftKey, e.ctrlKey || e.metaKey)}
+                  onRemove={() => removePhoto(photo.id)}
+                />
+              ))}
+            </SortableContext>
+          </Box>
 
-        <DragOverlay dropAnimation={{
-          sideEffects: defaultDropAnimationSideEffects({
-            styles: {
-              active: {
-                opacity: '0.5',
-              },
-            },
-          }),
-        }}>
-          {activeDragId && activePhoto ? (
-            <Box
-              sx={{
-                width: 56,
-                height: 56,
-                borderRadius: 1,
-                overflow: 'hidden',
-                border: '2px solid',
-                borderColor: 'primary.main',
-                cursor: 'grabbing',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-              }}
-            >
-              <img
-                src={activePhoto.objectURL}
-                alt=""
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              />
-            </Box>
-          ) : null}
-        </DragOverlay>
-      </DndContext>
+          <DragOverlay>
+            {activeId && activeDragPhoto ? (
+              <Box
+                sx={{
+                  width: 80,
+                  height: 80,
+                  borderRadius: 1,
+                  overflow: 'hidden',
+                  border: '2px solid',
+                  borderColor: 'primary.main',
+                  opacity: 0.8,
+                  boxShadow: 8,
+                }}
+              >
+                <img
+                  src={activeDragPhoto.objectURL}
+                  alt=""
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                />
+              </Box>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
+      </Box>
 
-      <IconButton
-        size="small"
-        onClick={handleNext}
-        disabled={activePhotoIndex >= photos.length - 1}
-      >
+      <IconButton size="small" onClick={handleNext} disabled={activePhotoIndex >= photos.length - 1}>
         <ChevronRightIcon />
       </IconButton>
 
-      <Typography variant="caption" color="text.secondary" sx={{ minWidth: 50, textAlign: 'center' }}>
+      <Typography variant="caption" sx={{ minWidth: 45, textAlign: 'right', color: 'text.secondary' }}>
         {activePhotoIndex + 1} / {photos.length}
       </Typography>
     </Box>
