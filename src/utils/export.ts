@@ -58,7 +58,7 @@ export function downloadBlob(blob: Blob, filename: string): void {
 }
 
 /**
- * Export all photos sequentially with a delay between downloads.
+ * Export all photos sequentially. Supports direct saving to a directory handle.
  */
 export async function exportAllPhotos(
   photos: PhotoItem[],
@@ -66,7 +66,8 @@ export async function exportAllPhotos(
   canvasHeight: number,
   format: ExportFormat,
   quality: number,
-  onProgress?: (current: number, total: number) => void
+  onProgress?: (current: number, total: number) => void,
+  directoryHandle?: FileSystemDirectoryHandle
 ): Promise<void> {
   const total = photos.length;
 
@@ -76,11 +77,24 @@ export async function exportAllPhotos(
 
     const blob = await exportPhoto(photo, canvasWidth, canvasHeight, format, quality);
     const filename = getExportFilename(photo.file.name, format);
-    downloadBlob(blob, filename);
 
-    // Delay between downloads to avoid browser blocking
+    if (directoryHandle) {
+      try {
+        const fileHandle = await directoryHandle.getFileHandle(filename, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+      } catch (err) {
+        console.error(`Failed to save ${filename} to directory, falling back to download:`, err);
+        downloadBlob(blob, filename);
+      }
+    } else {
+      downloadBlob(blob, filename);
+    }
+
+    // Delay between photos to keep UI smooth and respect browser limits
     if (i < total - 1) {
-      await new Promise((r) => setTimeout(r, 250));
+      await new Promise((r) => setTimeout(r, 100));
     }
   }
 }

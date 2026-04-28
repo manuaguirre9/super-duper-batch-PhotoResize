@@ -17,7 +17,9 @@ import VerticalAlignCenterIcon from '@mui/icons-material/VerticalAlignCenter';
 import ZoomInIcon from '@mui/icons-material/ZoomIn';
 import ZoomOutIcon from '@mui/icons-material/ZoomOut';
 import DeleteIcon from '@mui/icons-material/Delete';
+import SaveIcon from '@mui/icons-material/Save';
 import { useAppStore } from '../../store/useAppStore';
+import { exportPhoto, getExportFilename } from '../../utils/export';
 
 export default function Toolbar() {
   const {
@@ -71,6 +73,40 @@ export default function Toolbar() {
   const handleRemove = () => {
     if (!photo) return;
     removePhoto(photo.id);
+  };
+
+  const handleExportCurrent = async () => {
+    if (!photo) return;
+
+    try {
+      const { canvasWidth, canvasHeight, exportFormat, exportQuality, setNotification } = useAppStore.getState();
+      const blob = await exportPhoto(photo, canvasWidth, canvasHeight, exportFormat, exportQuality);
+      const suggestedName = getExportFilename(photo.file.name, exportFormat);
+
+      if ('showSaveFilePicker' in window) {
+        const handle = await (window as any).showSaveFilePicker({
+          suggestedName,
+          types: [{
+            description: exportFormat === 'jpeg' ? 'JPEG Image' : 'PNG Image',
+            accept: { [exportFormat === 'jpeg' ? 'image/jpeg' : 'image/png']: [exportFormat === 'jpeg' ? '.jpg' : '.png'] },
+          }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        setNotification({ message: 'Photo saved successfully!', type: 'success' });
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = suggestedName;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      if ((err as any).name === 'AbortError') return;
+      console.error('Failed to export photo:', err);
+    }
   };
 
   return (
@@ -202,7 +238,15 @@ export default function Toolbar() {
 
       <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
 
-      {/* Reset & Remove */}
+      {/* Export, Reset & Remove */}
+      <Tooltip title="Export current photo (Save As)">
+        <span>
+          <IconButton size="small" disabled={disabled} onClick={handleExportCurrent} color="primary">
+            <SaveIcon fontSize="small" />
+          </IconButton>
+        </span>
+      </Tooltip>
+
       <Tooltip title="Reset adjustments">
         <span>
           <IconButton size="small" disabled={disabled} onClick={handleReset}>

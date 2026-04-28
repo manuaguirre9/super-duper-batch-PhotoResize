@@ -34,6 +34,22 @@ export default function ExportPanel() {
 
   const handleExport = async () => {
     if (photos.length === 0) return;
+
+    let directoryHandle: FileSystemDirectoryHandle | undefined;
+
+    // Check if the File System Access API is supported
+    if ('showDirectoryPicker' in window) {
+      try {
+        directoryHandle = await (window as any).showDirectoryPicker({
+          mode: 'readwrite',
+        });
+      } catch (err) {
+        // If the user cancels the dialog, we stop the process
+        if ((err as any).name === 'AbortError') return;
+        console.warn('Directory picker not available or failed, falling back to standard downloads.');
+      }
+    }
+
     setAnchorEl(null);
     setExporting(true);
 
@@ -44,7 +60,8 @@ export default function ExportPanel() {
         canvasHeight,
         exportFormat,
         exportQuality,
-        (current, total) => setExportProgress({ current, total })
+        (current, total) => setExportProgress({ current, total }),
+        directoryHandle
       );
       useAppStore.getState().setNotification({
         message: `Successfully exported ${photos.length} photos!`,
